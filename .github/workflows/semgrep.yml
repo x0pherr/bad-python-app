@@ -1,0 +1,130 @@
+# Name of this GitHub Actions workflow.
+name: Semgrep SAST
+
+on:
+  workflow_call:
+    inputs:
+      runner-group:
+        description: "Name of runner group that corresponds to the github organization"
+        required: true
+        type: string
+      app-ids:
+        description: "Comma-separated list of application IDs found in https://app.intel.com"
+        required: false
+        type: string
+      prod-branch:
+        description: "Branch that should be tagged with prod"
+        required: false
+        type: string
+      prod-scan:
+        description: "If set to true, will tag prod branch with prod tag"
+        required: false
+        type: string
+      semgrep-flags:
+        description: "Optional flags to use with the 'semgrep ci' command"
+        required: false
+        type: string
+      max-high-severity:
+        description: "Maximum number of high severity findings allowed"
+        required: false
+        type: string
+      max-medium-severity:
+        description: "Maximum number of medium severity findings allowed"
+        required: false
+        type: string
+      other-tags:
+        description: "Comma-separated list of other tags to add to the config file"
+        required: false
+        type: string
+    secrets:
+      SEMGREP_APP_TOKEN:
+        description: 'Token passed as org level secret from the calling workflow'
+        required: true
+
+jobs:
+  semgrep:
+    name: SAST Scan
+    runs-on: ${{ inputs.runner-group }}
+    container:
+      # A Docker image with Semgrep installed. Do not change this.
+      image: semgrep/semgrep
+
+    # Skip any PR created by dependabot to avoid permission issues:
+    if: (github.actor != 'dependabot[bot]')
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set tag
+      shell: sh
+      run: |
+          default_branch="${{ github.event.repository.default_branch }}"
+          prod_branch="${{ inputs.prod-branch }}"
+          if [ -z "$prod_branch" ]; then
+            prod_branch="$default_branch"
+          fi
+          if [ ! -f .semgrepconfig.yml ]; then
+            echo "tags:" > .semgrepconfig.yml
+          fi
+          current_branch="${{ github.ref_name }}"
+          base_branch="${{ github.base_ref }}"
+          if [ "${{ inputs.prod-scan }}" = "true" ] && { [ "$current_branch" = "$prod_branch" ] || [ "$base_branch" = "$prod_branch" ]; }; then
+            for id in $(echo "${{ inputs.app-ids }}" | tr ',' '\n'); do
+              echo "  - app-$id-prod" >> .semgrepconfig.yml
+            done
+          else
+            for id in $(echo "${{ inputs.app-ids }}" | tr ',' '\n'); do
+              echo "  - app-$id-dev" >> .semgrepconfig.yml
+            done
+          fi
+          if [ -n "${{ inputs.other-tags }}" ]; then
+            for tag in $(echo "${{ inputs.other-tags }}" | tr ',' '\n'); do
+              echo "  - $tag" >> .semgrepconfig.yml
+            done
+          fi
+          if [ -f .semgrepconfig.yml ]; then
+            existing_tags=$(grep -Eo '  - .*' .semgrepconfig.yml)
+            for tag in $existing_tags; do
+              if ! grep -q "$tag" .semgrepconfig.yml; then
+                echo "$tag" >> .semgrepconfig.yml
+              fi
+            done
+          fi
+    - name: Print Semgrep Config
+      shell: sh
+      run: cat .semgrepconfig.yml
+    - name: Semgrep CI for pull request
+      run: |
+        semgrep ci ${{inputs.semgrep-flags }} --json > semgrep-results.json
+        # echo "max-high-severity: ${{ inputs.max-high-severity }}"
+        # echo "max-medium-severity: ${{ inputs.max-medium-severity }}"
+        # cat semgrep-results.json
+        if [ -n "${{ inputs.max-high-severity }}" ] || [ -n "${{ inputs.max-medium-severity }}" ]; then
+          high_severity=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' semgrep-results.json)
+          medium_severity=$(jq '[.results[] | select(.extra.severity == "WARNING")] | length' semgrep-results.json)
+          echo "High severity findings: $high_severity"
+          echo "Medium severity findings: $medium_severity"
+          if [ "$high_severity" -gt "${{ inputs.max-high-severity }}" ] || [ "$medium_severity" -gt "${{ inputs.max-medium-severity }}" ]; then
+            echo "Failing the pull request based on configured finding threshold."
+            exit 1
+          else
+            echo "No blocking findings."
+          fi
+        else
+          echo "No severity limits provided. Skipping severity check."
+        fi
+      if: ${{ github.event_name == 'pull_request' }}
+      env:
+        SEMGREP_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        SEMGREP_REPO_DISPLAY_NAME: ${{ github.repository }}/${{ github.base_ref }}
+        SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+    - name: Semgrep CI for others
+      run: semgrep ci ${{inputs.semgrep-flags }}
+      if: ${{ github.event_name != 'pull_request' }}
+      env:
+        SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        SEMGREP_REPO_DISPLAY_NAME: ${{ github.repository }}/${{ github.ref_name }}
+    - name: Upload SARIF file for GitHub Advanced Security Dashboard
+      uses: github/codeql-action/upload-sarif@v2
+      with: 
+        sarif_file: semgrep.sarif
+      if: always()
