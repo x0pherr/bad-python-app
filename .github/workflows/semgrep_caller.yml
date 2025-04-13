@@ -21,7 +21,7 @@ on:
 
 jobs:
   Call-Workflow:
-    uses: x0pherr/.local/.github/workflows/semgrep.yml@main
+    uses: .github/workflows/semgrep.yml@main
     with:
       # (Required) Please insert the runner group for your project
       # Example: runner-group: 'ubuntu/latest'
