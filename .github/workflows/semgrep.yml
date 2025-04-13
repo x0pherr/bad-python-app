@@ -27,44 +27,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Set tag
-      shell: sh
-      run: |
-          default_branch="${{ github.event.repository.default_branch }}"
-          prod_branch="${{ secrets.PROD_BRANCH }}"
-          if [ -z "$prod_branch" ]; then
-            prod_branch="$default_branch"
-          fi
-          if [ ! -f .semgrepconfig.yml ]; then
-            echo "tags:" > .semgrepconfig.yml
-          fi
-          current_branch="${{ github.ref_name }}"
-          base_branch="${{ github.base_ref }}"
-          if [ "${{ secrets.PROD_SCAN }}" = "true" ] && { [ "$current_branch" = "$prod_branch" ] || [ "$base_branch" = "$prod_branch" ]; }; then
-            for id in $(echo "${{ secrets.APP_IDS }}" | tr ',' '\n'); do
-              echo "  - app-$id-prod" >> .semgrepconfig.yml
-            done
-          else
-            for id in $(echo "${{ secrets.APP_IDS }}" | tr ',' '\n'); do
-              echo "  - app-$id-dev" >> .semgrepconfig.yml
-            done
-          fi
-          if [ -n "${{ secrets.OTHER_TAGS }}" ]; then
-            for tag in $(echo "${{ secrets.OTHER_TAGS }}" | tr ',' '\n'); do
-              echo "  - $tag" >> .semgrepconfig.yml
-            done
-          fi
-          if [ -f .semgrepconfig.yml ]; then
-            existing_tags=$(grep -Eo '  - .*' .semgrepconfig.yml)
-            for tag in $existing_tags; do
-              if ! grep -q "$tag" .semgrepconfig.yml; then
-                echo "$tag" >> .semgrepconfig.yml
-              fi
-            done
-          fi
-    - name: Print Semgrep Config
-      shell: sh
-      run: cat .semgrepconfig.yml
     - name: Semgrep CI for pull request
       run: |
         semgrep ci ${{ secrets.SEMGREP_FLAGS }} --json > semgrep-results.json
