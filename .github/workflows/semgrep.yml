@@ -29,20 +29,15 @@ jobs:
     - uses: actions/checkout@v4
     - name: Semgrep CI for pull request
       run: |
-        semgrep ci --sarif > semgrep.sarif
+        semgrep ci
       if: ${{ github.event_name == 'pull_request' }}
       env:
         SEMGREP_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         SEMGREP_REPO_DISPLAY_NAME: ${{ github.repository }}/${{ github.base_ref }}
         SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
     - name: Semgrep CI for others
-      run: semgrep ci --sarif > semgrep.sarif
+      run: semgrep ci
       if: ${{ github.event_name != 'pull_request' }}
       env:
         SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
         SEMGREP_REPO_DISPLAY_NAME: ${{ github.repository }}/${{ github.ref_name }}
-    - name: Upload SARIF file for GitHub Advanced Security Dashboard
-      uses: github/codeql-action/upload-sarif@v3
-      with: 
-        sarif_file: semgrep.sarif
-      if: always()
